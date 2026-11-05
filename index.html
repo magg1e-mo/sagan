@@ -625,22 +625,37 @@ function buildDocxBlob(jpegs){
   return zipStore(files,'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
 }
 function detectPaper(L,w,h){
-  var n=w*h,i,x,y,hist=new Int32Array(256);
+  var n=w*h,i,hist=new Int32Array(256);
   for(i=0;i<n;i++)hist[L[i]]++;
+  var lab=new Int32Array(n),queue=new Int32Array(n),bg=new Uint8Array(n);
+  // candidate thresholds: Otsu + a sweep, so a pale desk or a lighting gradient still separates from the sheet
   var sum=0;for(i=0;i<256;i++)sum+=i*hist[i];
-  var wB=0,sB=0,best=-1,th=128;
+  var wB=0,sB=0,best=-1,otsu=128;
   for(i=0;i<256;i++){
     wB+=hist[i];if(!wB)continue;var wF=n-wB;if(!wF)break;
     sB+=i*hist[i];var mB=sB/wB,mF=(sum-sB)/wF,v=wB*wF*(mB-mF)*(mB-mF);
-    if(v>best){best=v;th=i;}
+    if(v>best){best=v;otsu=i;}
   }
-  var cB=0,sBb=0,cF=0,sFf=0;
-  for(i=0;i<256;i++){if(i<=th){cB+=hist[i];sBb+=i*hist[i];}else{cF+=hist[i];sFf+=i*hist[i];}}
-  if(!cB||!cF)return{err:'none'};
-  var mBk=sBb/cB,mFg=sFf/cF;
-  if(mFg-mBk<45||mFg<105)return{err:'none'};
-  // largest bright component (4-connected)
-  var lab=new Int32Array(n),queue=new Int32Array(n),bestId=0,bestCnt=0,id=0;
+  var ths=[otsu],t;
+  for(t=60;t<=232;t+=14)ths.push(t);
+  var cum=0,above=new Int32Array(256);
+  for(i=255;i>=0;i--){cum+=hist[i];above[i]=cum;}
+  var bestRes=null,bestScore=-1e9,fails={partial:0,shape:0};
+  for(var ti=0;ti<ths.length;ti++){
+    var th=ths[ti],fr=above[Math.min(255,th+1)]/n;
+    if(fr<0.1||fr>0.97)continue;
+    var r=detectAt(L,w,h,th,lab,queue,bg);
+    if(r.err){if(fails[r.err]!==undefined)fails[r.err]++;continue;}
+    var sc=-Math.abs(r.asp-1.414)*2-Math.abs(1-r.ratio)*6+(th===otsu?0.05:0);
+    if(sc>bestScore){bestScore=sc;bestRes=r;}
+  }
+  if(bestRes)return{q:bestRes.q,fill:bestRes.fill};
+  return{err:fails.partial?'partial':(fails.shape?'shape':'none')};
+}
+function detectAt(L,w,h,th,lab,queue,bg){
+  var n=w*h,i,x,y;
+  lab.fill(0);bg.fill(0);
+  var bestId=0,bestCnt=0,id=0;
   for(i=0;i<n;i++){
     if(L[i]<=th||lab[i])continue;
     id++;var head=0,tail=0;queue[tail++]=i;lab[i]=id;
@@ -654,8 +669,7 @@ function detectPaper(L,w,h){
     if(tail>bestCnt){bestCnt=tail;bestId=id;}
   }
   if(!bestId||bestCnt<n*0.08)return{err:'none'};
-  // fill holes: background reachable from border
-  var bg=new Uint8Array(n),head2=0,tail2=0;
+  var head2=0,tail2=0;
   function seed(p){if(lab[p]!==bestId&&!bg[p]){bg[p]=1;queue[tail2++]=p;}}
   for(x=0;x<w;x++){seed(x);seed((h-1)*w+x);}
   for(y=0;y<h;y++){seed(y*w);seed(y*w+w-1);}
@@ -663,12 +677,10 @@ function detectPaper(L,w,h){
     var q2=queue[head2++],qx=q2%w,qy=(q2-qx)/w;
     if(qx>0)seed(q2-1);if(qx<w-1)seed(q2+1);if(qy>0)seed(q2-w);if(qy<h-1)seed(q2+w);
   }
-  var area=0,minX=w,maxX=-1,minY=h,maxY=-1,borderN=0;
-  var tl=1e9,br=-1e9,tr=-1e9,bl=1e9,cTL,cBR,cTR,cBL;
+  var area=0,borderN=0,tl=1e9,br=-1e9,tr=-1e9,bl=1e9,cTL,cBR,cTR,cBL;
   for(y=0;y<h;y++)for(x=0;x<w;x++){
     if(bg[y*w+x])continue;
     area++;
-    if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y;
     if(x===0||y===0||x===w-1||y===h-1)borderN++;
     var s=x+y,d=x-y;
     if(s<tl){tl=s;cTL=[x,y];}
@@ -677,22 +689,25 @@ function detectPaper(L,w,h){
     if(d<bl){bl=d;cBL=[x,y];}
   }
   if(area<n*0.08||area>n*0.97)return{err:'none'};
-  if(borderN>3)return{err:'partial'};
+  if(borderN>Math.max(3,w*0.02))return{err:'partial'};
   var c=[[cTL[0]+.5,cTL[1]+.5],[cTR[0]+1,cTR[1]+.5],[cBR[0]+1,cBR[1]+1],[cBL[0]+.5,cBL[1]+1]];
-  // edge pixels
+  function D(a,b){return Math.hypot(a[0]-b[0],a[1]-b[1]);}
+  function polyArea(q){var a=0;for(var k=0;k<4;k++){var a0=q[k],a1=q[(k+1)%4];a+=a0[0]*a1[1]-a1[0]*a0[1];}return Math.abs(a)/2;}
+  // cheap coarse check first
+  var pa0=polyArea(c);
+  if(!pa0||area/pa0<0.86||area/pa0>1.14)return{err:'shape'};
   var ex=[],ey=[];
   for(y=1;y<h-1;y++)for(x=1;x<w-1;x++){
     var k=y*w+x;if(bg[k])continue;
     if(bg[k-1]||bg[k+1]||bg[k-w]||bg[k+w]){ex.push(x+.5);ey.push(y+.5);}
   }
-  // line fit per side
   var lines=[],j;
   for(i=0;i<4;i++){
     var A=c[i],B=c[(i+1)%4],dx=B[0]-A[0],dy=B[1]-A[1],len=Math.sqrt(dx*dx+dy*dy)||1,ux=dx/len,uy=dy/len;
     var tol=Math.max(2.5,len*0.025),mx=0,my=0,cnt=0,sel=[];
     for(j=0;j<ex.length;j++){
-      var rx=ex[j]-A[0],ry=ey[j]-A[1],t=(rx*ux+ry*uy)/len,dist=Math.abs(rx*uy-ry*ux);
-      if(t>0.12&&t<0.88&&dist<=tol){sel.push(j);mx+=ex[j];my+=ey[j];cnt++;}
+      var rx=ex[j]-A[0],ry=ey[j]-A[1],tt=(rx*ux+ry*uy)/len,dist=Math.abs(rx*uy-ry*ux);
+      if(tt>0.12&&tt<0.88&&dist<=tol){sel.push(j);mx+=ex[j];my+=ey[j];cnt++;}
     }
     if(cnt<6){lines.push(null);continue;}
     mx/=cnt;my/=cnt;var sxx=0,sxy=0,syy=0;
@@ -706,33 +721,26 @@ function detectPaper(L,w,h){
     if(l1&&l2){
       var den=l1.dx*l2.dy-l1.dy*l2.dx;
       if(Math.abs(den)>0.2){
-        var tt=((l2.x-l1.x)*l2.dy-(l2.y-l1.y)*l2.dx)/den;
-        var ix=l1.x+l1.dx*tt,iy=l1.y+l1.dy*tt;
+        var t2=((l2.x-l1.x)*l2.dy-(l2.y-l1.y)*l2.dx)/den;
+        var ix=l1.x+l1.dx*t2,iy=l1.y+l1.dy*t2;
         if(Math.abs(ix-cc[0])<8&&Math.abs(iy-cc[1])<8)pt=[ix,iy];
       }
     }
     q.push(pt);
   }
-  // validation: convex, area fill, aspect
-  var sg=0;
   for(i=0;i<4;i++){
     var p0=q[i],p1=q[(i+1)%4],p2=q[(i+2)%4];
-    var cr=(p1[0]-p0[0])*(p2[1]-p1[1])-(p1[1]-p0[1])*(p2[0]-p1[0]);
-    if(cr<=0)return{err:'shape'};
+    if((p1[0]-p0[0])*(p2[1]-p1[1])-(p1[1]-p0[1])*(p2[0]-p1[0])<=0)return{err:'shape'};
   }
-  var pa=0;
-  for(i=0;i<4;i++){var a0=q[i],a1=q[(i+1)%4];pa+=a0[0]*a1[1]-a1[0]*a0[1];}
-  pa=Math.abs(pa)/2;
-  if(!pa||area/pa<0.9||area/pa>1.1)return{err:'shape'};
-  function D(a,b){return Math.hypot(a[0]-b[0],a[1]-b[1]);}
+  var pa=polyArea(q),ratio=area/pa;
+  if(!pa||ratio<0.9||ratio>1.1)return{err:'shape'};
   var top=(D(q[0],q[1])+D(q[3],q[2]))/2,left=(D(q[0],q[3])+D(q[1],q[2]))/2;
   var asp=Math.max(top,left)/Math.min(top,left);
   if(asp<1.15||asp>1.8)return{err:'shape'};
   if(top>left)q=[q[3],q[0],q[1],q[2]];
-  // tiny inset so the paper edge is not included
   var mx2=0,my2=0;for(i=0;i<4;i++){mx2+=q[i][0]/4;my2+=q[i][1]/4;}
   var out=q.map(function(p){return[(p[0]+(mx2-p[0])*0.004)/w,(p[1]+(my2-p[1])*0.004)/h];});
-  return{q:out,fill:area/n};
+  return{q:out,fill:area/n,asp:asp,ratio:ratio};
 }
 
 /* small residual tilt: find the angle at which printed text lines are most "row-aligned", then rotate it out */
@@ -985,14 +993,22 @@ var anCtx=AN.cv.getContext('2d',{willReadFrequently:true});
 function startLoop(){stopLoop();AN.timer=setInterval(analyze,150);}
 function stopLoop(){if(AN.timer){clearInterval(AN.timer);AN.timer=null;}setProgress(0);}
 function overlaysOpen(){return document.querySelector('.sw.open')||$('#viewer').classList.contains('open');}
+function whyText(){
+  if(S.why==='partial')return'เห็นกระดาษไม่ครบ ถอยกล้องขึ้นอีกนิด';
+  if(S.why==='shape')return'ขอบกระดาษไม่ชัด วางให้เรียบ ไม่บัง';
+  return'วางกระดาษใต้กล้อง';
+}
 function qDist(a,b){var m=0;for(var i=0;i<4;i++)m=Math.max(m,Math.abs(a[i][0]-b[i][0])+Math.abs(a[i][1]-b[i][1]));return m;}
 function resetAN(){AN.armed=true;AN.still=0;AN.prev=null;}
 function analyze(){
+  if(AN.work)return;AN.work=true;try{analyze2();}finally{AN.work=false;}
+}
+function analyze2(){
   if(!S.running||S.tab!=='cam'||S.adjust||S.busy||document.hidden||overlaysOpen())return;
   var vw=video.videoWidth,vh=video.videoHeight;if(!vw||!vh)return;
   var trk=!!S.set.track;
   if(!trk&&!S.set.auto){setProgress(0);return;}
-  var w=trk?320:128,h=Math.max(2,Math.round(w*vh/vw));
+  var w=trk?240:128,h=Math.max(2,Math.round(w*vh/vw));
   if(AN.cv.width!==w||AN.cv.height!==h){AN.cv.width=w;AN.cv.height=h;AN.prev=null;AN.lastDet=null;}
   anCtx.drawImage(video,0,0,w,h);
   var px=anCtx.getImageData(0,0,w,h).data;
@@ -1027,8 +1043,8 @@ function analyze(){
   var diff=0,prev=AN.prev;
   if(prev&&prev.length===cur.length){var s=0;for(var k=0;k<cur.length;k++)s+=Math.abs(cur[k]-prev[k]);diff=s/cur.length;}else{diff=99;}
   AN.prev=cur;AN.cur=cur;
-  if(!S.set.auto){setProgress(0);setStatus(present?'พบกระดาษ กดปุ่มถ่ายเอง':(trk&&S.why==='partial'?'เห็นกระดาษไม่ครบทั้งแผ่น':'วางกระดาษใต้กล้อง'),present?'ready':'wait');return;}
-  if(!present){AN.armed=true;AN.still=0;setProgress(0);setStatus(trk&&S.why==='partial'?'เห็นกระดาษไม่ครบ ขยับให้อยู่ในภาพ':'วางกระดาษใต้กล้อง','wait');return;}
+  if(!S.set.auto){setProgress(0);setStatus(present?'พบกระดาษ กดปุ่มถ่ายเอง':(trk?whyText():'วางกระดาษใต้กล้อง'),present?'ready':'wait');return;}
+  if(!present){AN.armed=true;AN.still=0;setProgress(0);setStatus(trk?whyText():'วางกระดาษใต้กล้อง','wait');return;}
   if(diff>5||jitter>0.02){AN.armed=true;AN.still=0;setProgress(0);setStatus('กำลังจัดกระดาษ…','wait');return;}
   if(diff<2.4&&jitter<0.006){
     if(!AN.armed){setProgress(0);setStatus('รอหน้าถัดไป','ok');return;}
@@ -1073,11 +1089,28 @@ async function capture(manual){
   await sleep(40);
   try{
     var vw=video.videoWidth,vh=video.videoHeight;
+    var qn=null,wc;
+    if(S.set.track){
+      var dw=480,dh=Math.max(2,Math.round(dw*vh/vw));
+      workCv.width=dw;workCv.height=dh;
+      var dc=workCv.getContext('2d',{willReadFrequently:true});dc.drawImage(video,0,0,dw,dh);
+      var dpx=dc.getImageData(0,0,dw,dh).data,DL=new Uint8Array(dw*dh);
+      for(var di=0;di<dw*dh;di++){var dof=di*4;DL[di]=(dpx[dof]*77+dpx[dof+1]*150+dpx[dof+2]*29)>>8;}
+      var dres=detectPaper(DL,dw,dh);
+      if(dres.q)qn=dres.q;
+      else if(S.live)qn=S.live;
+      else if(S.saved[ori()])qn=curQuad();
+      else{
+        S.why=dres.err;enterAdjust();
+        setStatus('หาขอบกระดาษไม่เจอ ลากมุมให้ตรงกระดาษ แล้วกดเสร็จ','warn');
+        return;
+      }
+    }else qn=curQuad();
     workCv.width=vw;workCv.height=vh;
-    var wc=workCv.getContext('2d',{willReadFrequently:true});
+    wc=workCv.getContext('2d',{willReadFrequently:true});
     wc.drawImage(video,0,0,vw,vh);
     var img=wc.getImageData(0,0,vw,vh);
-    var q=((S.set.track&&S.live)?S.live:curQuad()).map(function(p){return[p[0]*vw,p[1]*vh];});
+    var q=qn.map(function(p){return[p[0]*vw,p[1]*vh];});
     await sleep(0);
     var out=warpPerspective(img.data,vw,vh,q,A4W,A4H);
     workCv.width=1;workCv.height=1;
