@@ -1081,6 +1081,16 @@ function whyText(){
   if(S.why==='shape')return'ขอบกระดาษไม่ชัด วางให้เรียบ ไม่บัง';
   return'วางกระดาษใต้กล้อง';
 }
+function blockSig(L,w,h){
+  var gx=24,gy=Math.max(4,Math.round(24*h/w)),sum=new Float32Array(gx*gy),cnt=new Float32Array(gx*gy),x,y,tot=0;
+  for(y=0;y<h;y++){var by=Math.min(gy-1,(y*gy/h)|0);for(x=0;x<w;x++){var k=by*gx+Math.min(gx-1,(x*gx/w)|0);sum[k]+=L[y*w+x];cnt[k]++;}}
+  for(var i=0;i<sum.length;i++){sum[i]/=cnt[i]||1;tot+=sum[i];}
+  tot/=sum.length;var vr=0,j;
+  for(j=0;j<sum.length;j++){sum[j]-=tot;vr+=sum[j]*sum[j];}
+  var sd=Math.sqrt(vr/sum.length)||1,sc=50/sd;
+  for(j=0;j<sum.length;j++)sum[j]*=sc;
+  return Array.prototype.slice.call(sum);
+}
 function qDist(a,b){var m=0;for(var i=0;i<4;i++)m=Math.max(m,Math.abs(a[i][0]-b[i][0])+Math.abs(a[i][1]-b[i][1]));return m;}
 function resetAN(){AN.armed=true;AN.still=0;AN.prev=null;}
 function analyze(){
@@ -1099,7 +1109,7 @@ function analyze2(){
   if(trk){
     var L=new Uint8Array(w*h);
     for(i=0;i<w*h;i++){var o=i*4,r0=px[o],g0=px[o+1],b0=px[o+2];L[i]=r0<g0?(r0<b0?r0:b0):(g0<b0?g0:b0);}
-    for(y=0;y<h;y+=3)for(x=0;x<w;x+=3)cur.push(L[y*w+x]);
+    cur=blockSig(L,w,h);
     var res=detectPaper(L,w,h);
     if(res.q){
       if(S.live&&qDist(res.q,S.live)<0.06){S.live=S.live.map(function(p,k){return[p[0]+(res.q[k][0]-p[0])*0.6,p[1]+(res.q[k][1]-p[1])*0.6];});}
@@ -1127,10 +1137,11 @@ function analyze2(){
   if(prev&&prev.length===cur.length){var s=0;for(var k=0;k<cur.length;k++)s+=Math.abs(cur[k]-prev[k]);diff=s/cur.length;}else{diff=99;}
   AN.prev=cur;AN.cur=cur;
   if(diff===99){if(!present)cancelCd();else if(AN.cd){AN.cd=0;cancelCd();}return;}
-  var big=diff>(trk?10:5)||jitter>0.03,calm=diff<(trk?4.5:2.4)&&jitter<0.012;
+  var big=diff>(trk?6:5)||jitter>0.05,calm=diff<(trk?2.2:2.4)&&jitter<0.02;
+  var dbg=trk?(' · '+diff.toFixed(1)+' / '+(jitter*100).toFixed(1)):'';
   if(!S.set.auto){cancelCd();setProgress(0);setStatus(present?'พบกระดาษ กดปุ่มถ่ายเอง':(trk?whyText():'วางกระดาษใต้กล้อง'),present?'ready':'wait');return;}
   if(!present){cancelCd();AN.armed=true;AN.still=0;setProgress(0);setStatus(trk?whyText():'วางกระดาษใต้กล้อง','wait');return;}
-  if(big){cancelCd();AN.armed=true;AN.still=0;setProgress(0);setStatus('กำลังจัดกระดาษ…','wait');return;}
+  if(big){cancelCd();AN.armed=true;AN.still=0;setProgress(0);setStatus('กำลังจัดกระดาษ…'+dbg,'wait');return;}
   if(!AN.armed){setProgress(0);setStatus('รอหน้าถัดไป','ok');return;}
   if(AN.cd){
     if(!calm){AN.cdBad++;if(AN.cdBad>=3){cancelCd();AN.still=0;setProgress(0);setStatus('ขยับอยู่ ถือให้นิ่งอีกนิด','wait');return;}}else AN.cdBad=0;
@@ -1144,12 +1155,12 @@ function analyze2(){
       AN.still=0;
       if(!S.retakeId&&AN.lastSig&&AN.lastSig.length===cur.length){
         var s2=0;for(var m=0;m<cur.length;m++)s2+=Math.abs(cur[m]-AN.lastSig[m]);
-        if(s2/cur.length<3.5){AN.armed=false;setProgress(0);setStatus('รอหน้าถัดไป','ok');return;}
+        if(s2/cur.length<(trk?0.8:3.5)){AN.armed=false;setProgress(0);setStatus('รอหน้าถัดไป','ok');return;}
       }
       if(S.set.countdown){AN.cd=Date.now();AN.cdBad=0;showCd(3);}
       else capture(false);
     }
-  }else{AN.still=Math.max(0,AN.still-1);setProgress(0);setStatus('ถือให้นิ่งอีกนิด','wait');}
+  }else{AN.still=Math.max(0,AN.still-1);setProgress(0);setStatus('ถือให้นิ่งอีกนิด'+dbg,'wait');}
 }
 function showCd(n){var e=$('#camCd');e.hidden=false;if(e.textContent!==String(n)){e.textContent=n;e.classList.remove('tick');void e.offsetWidth;e.classList.add('tick');beep();}}
 function cancelCd(){AN.cd=0;AN.cdBad=0;var e=$('#camCd');if(e&&!e.hidden){e.hidden=true;e.textContent='';}}
