@@ -82,7 +82,12 @@ main{flex:1;min-height:0;position:relative}
 .frame svg.ov{position:absolute;inset:0;width:100%;height:100%;display:block;overflow:visible}
 .ov .dim{fill:rgba(8,10,16,.5);fill-rule:evenodd}
 .ov .edge{fill:none;stroke:rgba(255,255,255,.9);stroke-width:2;vector-effect:non-scaling-stroke;stroke-linejoin:round}
-.ov[data-state="ready"] .edge{stroke:#8fa0ff}
+.ov[data-state="ready"] .edge{stroke:#4ed39a;stroke-width:3.5}
+.camcd{position:absolute;right:14px;top:14px;width:84px;height:84px;border-radius:50%;background:rgba(18,20,28,.55);
+  -webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);color:#fff;display:grid;place-items:center;font-size:48px;font-weight:700;
+  font-variant-numeric:tabular-nums;pointer-events:none;z-index:4;border:3px solid #4ed39a}
+.camcd[hidden]{display:none}
+.camcd.tick{animation:bump .5s var(--ease)}
 .ov[data-state="ok"] .edge{stroke:#4ed39a}
 .ov[data-state="adjust"] .edge{stroke:#8fa0ff;stroke-dasharray:6 5}
 .handle{position:absolute;width:48px;height:48px;margin:-24px 0 0 -24px;border-radius:50%;touch-action:none;display:none}
@@ -109,7 +114,7 @@ main{flex:1;min-height:0;position:relative}
   background:rgba(16,18,26,.78);color:#fff;font-size:14px;font-weight:500;white-space:nowrap}
 .pill i{width:8px;height:8px;border-radius:50%;background:#8b90a0;flex:none}
 .pill[data-k="wait"] i{background:#ffc15e}
-.pill[data-k="ready"] i{background:#8fa0ff}
+.pill[data-k="ready"] i{background:#4ed39a}
 .pill[data-k="ok"] i{background:#4ed39a}
 .pill[data-k="busy"] i{background:#8fa0ff;animation:pulse 1s infinite}
 .pill[data-k="warn"] i{background:#ff8a7a}
@@ -275,6 +280,7 @@ main{flex:1;min-height:0;position:relative}
         <div class="loupe left" id="loupe" hidden><canvas id="loupeCv" width="104" height="104"></canvas></div>
         <div class="retake" id="retakeBar" hidden><span id="retakeTxt">ถ่ายหน้านี้ใหม่</span><button id="retakeX" aria-label="ยกเลิกถ่ายใหม่"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
         <button class="pill" id="pill" data-k="idle" hidden><i></i><span id="pillTxt"></span></button>
+        <div class="camcd num" id="camCd" hidden></div>
         <div class="flash" id="flash"></div>
         <div class="start" id="start">
           <svg class="i" viewBox="0 0 24 24"><path d="M4 8.5A2.5 2.5 0 0 1 6.5 6H8l1.2-1.6A1 1 0 0 1 10 4h4a1 1 0 0 1 .8.4L16 6h1.5A2.5 2.5 0 0 1 20 8.5v8a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5z"/><circle cx="12" cy="12.5" r="3.2"/></svg>
@@ -332,7 +338,7 @@ main{flex:1;min-height:0;position:relative}
     </div>
     <div class="row"><label for="fLabel">ห้อง / วิชา<small>ไม่บังคับ</small></label><input class="field" type="text" id="fLabel" placeholder="เช่น ม.2/10" maxlength="40" autocomplete="off"></div>
     <div class="row"><span class="l">จับมุมกระดาษอัตโนมัติ<small>กรอบวิ่งเข้าหาขอบกระดาษเอง</small></span><button class="sw-t" role="switch" id="tTrack" aria-checked="true" aria-label="จับมุมกระดาษอัตโนมัติ"></button></div>
-    <div class="row"><span class="l">นับถอยหลังแล้วบันทึกเอง<small>3 · 2 · 1 ในหน้ายืนยัน กดถ่ายใหม่เพื่อยกเลิก</small></span><button class="sw-t" role="switch" id="tCd" aria-checked="true" aria-label="นับถอยหลังแล้วบันทึกเอง"></button></div>
+    <div class="row"><span class="l">นับถอยหลังแล้วบันทึกเอง<small>เห็นกระดาษนิ่งแล้วนับ 3 · 2 · 1 และบันทึกให้เลย</small></span><button class="sw-t" role="switch" id="tCd" aria-checked="true" aria-label="นับถอยหลังแล้วบันทึกเอง"></button></div>
     <div class="row"><span class="l">ถ่ายอัตโนมัติ<small>ถ่ายเองเมื่อวางกระดาษนิ่ง</small></span><button class="sw-t" role="switch" id="tAuto" aria-checked="true" aria-label="ถ่ายอัตโนมัติ"></button></div>
     <div class="row"><span class="l">ยืนยันก่อนบันทึก<small>ดูภาพก่อนเก็บทุกหน้า</small></span><button class="sw-t" role="switch" id="tCf" aria-checked="true" aria-label="ยืนยันก่อนบันทึก"></button></div>
     <div class="row"><span class="l">ปรับภาพให้เหมือนสแกน<small>พื้นขาว ลบเงา</small></span><button class="sw-t" role="switch" id="tEnh" aria-checked="true" aria-label="ปรับภาพให้เหมือนสแกน"></button></div>
@@ -1064,7 +1070,7 @@ function moveDrag(e){
 }
 
 /* ---------- auto capture ---------- */
-var AN={cv:document.createElement('canvas'),prev:null,cur:null,still:0,armed:true,lastSig:null,timer:null,N:6};
+var AN={cv:document.createElement('canvas'),prev:null,cur:null,still:0,armed:true,lastSig:null,timer:null,N:4,cd:0,cdBad:0};
 AN.cv.width=128;
 var anCtx=AN.cv.getContext('2d',{willReadFrequently:true});
 function startLoop(){stopLoop();AN.timer=setInterval(analyze,150);}
@@ -1081,7 +1087,7 @@ function analyze(){
   if(AN.work)return;AN.work=true;try{analyze2();}finally{AN.work=false;}
 }
 function analyze2(){
-  if(!S.running||S.tab!=='cam'||S.adjust||S.busy||document.hidden||overlaysOpen())return;
+  if(!S.running||S.tab!=='cam'||S.adjust||S.busy||document.hidden||overlaysOpen()){if(AN.cd)cancelCd();return;}
   var vw=video.videoWidth,vh=video.videoHeight;if(!vw||!vh)return;
   var trk=!!S.set.track;
   if(!trk&&!S.set.auto){setProgress(0);return;}
@@ -1120,22 +1126,33 @@ function analyze2(){
   var diff=0,prev=AN.prev;
   if(prev&&prev.length===cur.length){var s=0;for(var k=0;k<cur.length;k++)s+=Math.abs(cur[k]-prev[k]);diff=s/cur.length;}else{diff=99;}
   AN.prev=cur;AN.cur=cur;
-  if(!S.set.auto){setProgress(0);setStatus(present?'พบกระดาษ กดปุ่มถ่ายเอง':(trk?whyText():'วางกระดาษใต้กล้อง'),present?'ready':'wait');return;}
-  if(!present){AN.armed=true;AN.still=0;setProgress(0);setStatus(trk?whyText():'วางกระดาษใต้กล้อง','wait');return;}
-  if(diff>5||jitter>0.02){AN.armed=true;AN.still=0;setProgress(0);setStatus('กำลังจัดกระดาษ…','wait');return;}
-  if(diff<2.4&&jitter<0.006){
-    if(!AN.armed){setProgress(0);setStatus('รอหน้าถัดไป','ok');return;}
-    AN.still++;setProgress(AN.still/AN.N);setStatus('นิ่งไว้สักครู่','ready');
+  if(diff===99){if(!present)cancelCd();else if(AN.cd){AN.cd=0;cancelCd();}return;}
+  var big=diff>(trk?10:5)||jitter>0.03,calm=diff<(trk?4.5:2.4)&&jitter<0.012;
+  if(!S.set.auto){cancelCd();setProgress(0);setStatus(present?'พบกระดาษ กดปุ่มถ่ายเอง':(trk?whyText():'วางกระดาษใต้กล้อง'),present?'ready':'wait');return;}
+  if(!present){cancelCd();AN.armed=true;AN.still=0;setProgress(0);setStatus(trk?whyText():'วางกระดาษใต้กล้อง','wait');return;}
+  if(big){cancelCd();AN.armed=true;AN.still=0;setProgress(0);setStatus('กำลังจัดกระดาษ…','wait');return;}
+  if(!AN.armed){setProgress(0);setStatus('รอหน้าถัดไป','ok');return;}
+  if(AN.cd){
+    if(!calm){AN.cdBad++;if(AN.cdBad>=3){cancelCd();AN.still=0;setProgress(0);setStatus('ขยับอยู่ ถือให้นิ่งอีกนิด','wait');return;}}else AN.cdBad=0;
+    var el=Date.now()-AN.cd,n=3-Math.floor(el/900);
+    if(n<=0){cancelCd();capture(false);return;}
+    showCd(n);setProgress(Math.min(1,el/2700));setStatus('บันทึกใน '+n+' · ถือให้นิ่ง','ready');return;
+  }
+  if(calm){
+    AN.still++;setProgress(0);setStatus('พบกระดาษแล้ว','ready');
     if(AN.still>=AN.N){
       AN.still=0;
       if(!S.retakeId&&AN.lastSig&&AN.lastSig.length===cur.length){
         var s2=0;for(var m=0;m<cur.length;m++)s2+=Math.abs(cur[m]-AN.lastSig[m]);
-        if(s2/cur.length<2.4){AN.armed=false;setProgress(0);setStatus('รอหน้าถัดไป','ok');return;}
+        if(s2/cur.length<3.5){AN.armed=false;setProgress(0);setStatus('รอหน้าถัดไป','ok');return;}
       }
-      capture(false);
+      if(S.set.countdown){AN.cd=Date.now();AN.cdBad=0;showCd(3);}
+      else capture(false);
     }
-  }else{AN.still=0;setProgress(0);}
+  }else{AN.still=Math.max(0,AN.still-1);setProgress(0);setStatus('ถือให้นิ่งอีกนิด','wait');}
 }
+function showCd(n){var e=$('#camCd');e.hidden=false;if(e.textContent!==String(n)){e.textContent=n;e.classList.remove('tick');void e.offsetWidth;e.classList.add('tick');beep();}}
+function cancelCd(){AN.cd=0;AN.cdBad=0;var e=$('#camCd');if(e&&!e.hidden){e.hidden=true;e.textContent='';}}
 /* the frame runs toward the paper corners */
 function trackAnim(){
   if(S.set.track&&!S.adjust&&S.running&&S.tab==='cam'){
@@ -1161,7 +1178,7 @@ function toBlob(cv,type,q){return new Promise(function(res){cv.toBlob(res,type,q
 function flash(){var f=$('#flash');f.classList.remove('go');void f.offsetWidth;f.classList.add('go');}
 async function capture(manual){
   if(S.busy||!S.running||S.adjust)return;
-  S.busy=true;setProgress(0);setStatus('กำลังประมวลผล…','busy');flash();beep();
+  cancelCd();S.busy=true;setProgress(0);setStatus('กำลังประมวลผล…','busy');flash();if(manual)beep();
   var sigNow=AN.cur?AN.cur.slice():null;
   await sleep(40);
   try{
@@ -1201,7 +1218,8 @@ async function capture(manual){
     thCv.width=300;thCv.height=424;
     thCv.getContext('2d').drawImage(outCv,0,0,300,424);
     var thumb=await toBlob(thCv,'image/jpeg',0.75);
-    if(S.set.confirm){
+    var autoSave=!manual&&S.set.countdown&&!S.retakeId;
+    if(S.set.confirm&&!autoSave){
       var okSave=await askConfirm(blob);
       if(!okSave){AN.lastSig=null;AN.armed=false;AN.still=0;AN.prev=null;setStatus(idleText(),'wait');return;}
     }
