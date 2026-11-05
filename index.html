@@ -89,6 +89,16 @@ main{flex:1;min-height:0;position:relative}
 .handle::after{content:"";position:absolute;left:12px;top:12px;width:24px;height:24px;border-radius:50%;
   background:rgba(51,71,208,.35);border:2.5px solid #fff;box-shadow:0 1px 6px rgba(0,0,0,.45)}
 .adjusting .handle{display:block}
+.autobtn{position:absolute;top:12px;left:12px;z-index:3;height:34px;padding:0 12px 0 10px;border-radius:17px;display:flex;align-items:center;gap:7px;
+  background:rgba(18,20,28,.62);color:#fff;font-size:13px;font-weight:600;-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
+.autobtn i{width:8px;height:8px;border-radius:50%;background:#8b90a0}
+.autobtn[aria-pressed="true"] i{background:#4ed39a}
+.cfwrap{position:relative;width:fit-content;max-width:100%;margin:14px auto 0}
+.cfwrap .cfimg{margin:0}
+.cfcd{position:absolute;right:10px;bottom:10px;width:56px;height:56px;border-radius:50%;background:rgba(18,20,28,.72);color:#fff;
+  display:grid;place-items:center;font-size:28px;font-weight:700;font-variant-numeric:tabular-nums;pointer-events:none}
+.cfcd[hidden]{display:none}
+.cfcd.tick{animation:bump .4s var(--ease)}
 .loupe{position:absolute;top:12px;width:104px;height:104px;border-radius:50%;border:3px solid #fff;overflow:hidden;
   box-shadow:0 2px 12px rgba(0,0,0,.5);background:#000;pointer-events:none}
 .loupe canvas{width:100%;height:100%;display:block}
@@ -261,6 +271,7 @@ main{flex:1;min-height:0;position:relative}
           <div class="handle" data-i="2"></div>
           <div class="handle" data-i="3"></div>
         </div>
+        <button class="autobtn" id="autoBtn" aria-pressed="true" aria-label="ระบบอัตโนมัติ"><i></i><span id="autoTxt">อัตโนมัติ</span></button>
         <div class="loupe left" id="loupe" hidden><canvas id="loupeCv" width="104" height="104"></canvas></div>
         <div class="retake" id="retakeBar" hidden><span id="retakeTxt">ถ่ายหน้านี้ใหม่</span><button id="retakeX" aria-label="ยกเลิกถ่ายใหม่"><svg class="i" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button></div>
         <button class="pill" id="pill" data-k="idle" hidden><i></i><span id="pillTxt"></span></button>
@@ -320,6 +331,8 @@ main{flex:1;min-height:0;position:relative}
       </div>
     </div>
     <div class="row"><label for="fLabel">ห้อง / วิชา<small>ไม่บังคับ</small></label><input class="field" type="text" id="fLabel" placeholder="เช่น ม.2/10" maxlength="40" autocomplete="off"></div>
+    <div class="row"><span class="l">จับมุมกระดาษอัตโนมัติ<small>กรอบวิ่งเข้าหาขอบกระดาษเอง</small></span><button class="sw-t" role="switch" id="tTrack" aria-checked="true" aria-label="จับมุมกระดาษอัตโนมัติ"></button></div>
+    <div class="row"><span class="l">นับถอยหลังแล้วบันทึกเอง<small>3 · 2 · 1 ในหน้ายืนยัน กดถ่ายใหม่เพื่อยกเลิก</small></span><button class="sw-t" role="switch" id="tCd" aria-checked="true" aria-label="นับถอยหลังแล้วบันทึกเอง"></button></div>
     <div class="row"><span class="l">ถ่ายอัตโนมัติ<small>ถ่ายเองเมื่อวางกระดาษนิ่ง</small></span><button class="sw-t" role="switch" id="tAuto" aria-checked="true" aria-label="ถ่ายอัตโนมัติ"></button></div>
     <div class="row"><span class="l">ยืนยันก่อนบันทึก<small>ดูภาพก่อนเก็บทุกหน้า</small></span><button class="sw-t" role="switch" id="tCf" aria-checked="true" aria-label="ยืนยันก่อนบันทึก"></button></div>
     <div class="row"><span class="l">ปรับภาพให้เหมือนสแกน<small>พื้นขาว ลบเงา</small></span><button class="sw-t" role="switch" id="tEnh" aria-checked="true" aria-label="ปรับภาพให้เหมือนสแกน"></button></div>
@@ -411,7 +424,7 @@ main{flex:1;min-height:0;position:relative}
   <div class="sheet" role="dialog" aria-label="ยืนยันหน้าสแกน">
     <div class="grab"></div>
     <h2 id="cfT">หน้า 1 · คาบ 1</h2>
-    <img class="cfimg" id="cfImg" alt="ตัวอย่างหน้าที่สแกน">
+    <div class="cfwrap"><img class="cfimg" id="cfImg" alt="ตัวอย่างหน้าที่สแกน"><div class="cfcd num" id="cfCd" hidden></div></div>
     <div class="cfrow">
       <button class="btn" id="cfNo">ถ่ายใหม่</button>
       <button class="btn primary" id="cfOk">ใช้หน้านี้</button>
@@ -611,6 +624,117 @@ function buildDocxBlob(jpegs){
   jpegs.forEach((j,i)=>files.push({name:'word/media/image'+(i+1)+'.jpg',data:j}));
   return zipStore(files,'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
 }
+function detectPaper(L,w,h){
+  var n=w*h,i,x,y,hist=new Int32Array(256);
+  for(i=0;i<n;i++)hist[L[i]]++;
+  var sum=0;for(i=0;i<256;i++)sum+=i*hist[i];
+  var wB=0,sB=0,best=-1,th=128;
+  for(i=0;i<256;i++){
+    wB+=hist[i];if(!wB)continue;var wF=n-wB;if(!wF)break;
+    sB+=i*hist[i];var mB=sB/wB,mF=(sum-sB)/wF,v=wB*wF*(mB-mF)*(mB-mF);
+    if(v>best){best=v;th=i;}
+  }
+  var cB=0,sBb=0,cF=0,sFf=0;
+  for(i=0;i<256;i++){if(i<=th){cB+=hist[i];sBb+=i*hist[i];}else{cF+=hist[i];sFf+=i*hist[i];}}
+  if(!cB||!cF)return{err:'none'};
+  var mBk=sBb/cB,mFg=sFf/cF;
+  if(mFg-mBk<45||mFg<105)return{err:'none'};
+  // largest bright component (4-connected)
+  var lab=new Int32Array(n),queue=new Int32Array(n),bestId=0,bestCnt=0,id=0;
+  for(i=0;i<n;i++){
+    if(L[i]<=th||lab[i])continue;
+    id++;var head=0,tail=0;queue[tail++]=i;lab[i]=id;
+    while(head<tail){
+      var p=queue[head++],px=p%w,py=(p-px)/w;
+      if(px>0&&L[p-1]>th&&!lab[p-1]){lab[p-1]=id;queue[tail++]=p-1;}
+      if(px<w-1&&L[p+1]>th&&!lab[p+1]){lab[p+1]=id;queue[tail++]=p+1;}
+      if(py>0&&L[p-w]>th&&!lab[p-w]){lab[p-w]=id;queue[tail++]=p-w;}
+      if(py<h-1&&L[p+w]>th&&!lab[p+w]){lab[p+w]=id;queue[tail++]=p+w;}
+    }
+    if(tail>bestCnt){bestCnt=tail;bestId=id;}
+  }
+  if(!bestId||bestCnt<n*0.08)return{err:'none'};
+  // fill holes: background reachable from border
+  var bg=new Uint8Array(n),head2=0,tail2=0;
+  function seed(p){if(lab[p]!==bestId&&!bg[p]){bg[p]=1;queue[tail2++]=p;}}
+  for(x=0;x<w;x++){seed(x);seed((h-1)*w+x);}
+  for(y=0;y<h;y++){seed(y*w);seed(y*w+w-1);}
+  while(head2<tail2){
+    var q2=queue[head2++],qx=q2%w,qy=(q2-qx)/w;
+    if(qx>0)seed(q2-1);if(qx<w-1)seed(q2+1);if(qy>0)seed(q2-w);if(qy<h-1)seed(q2+w);
+  }
+  var area=0,minX=w,maxX=-1,minY=h,maxY=-1,borderN=0;
+  var tl=1e9,br=-1e9,tr=-1e9,bl=1e9,cTL,cBR,cTR,cBL;
+  for(y=0;y<h;y++)for(x=0;x<w;x++){
+    if(bg[y*w+x])continue;
+    area++;
+    if(x<minX)minX=x;if(x>maxX)maxX=x;if(y<minY)minY=y;if(y>maxY)maxY=y;
+    if(x===0||y===0||x===w-1||y===h-1)borderN++;
+    var s=x+y,d=x-y;
+    if(s<tl){tl=s;cTL=[x,y];}
+    if(s>br){br=s;cBR=[x,y];}
+    if(d>tr){tr=d;cTR=[x,y];}
+    if(d<bl){bl=d;cBL=[x,y];}
+  }
+  if(area<n*0.08||area>n*0.97)return{err:'none'};
+  if(borderN>3)return{err:'partial'};
+  var c=[[cTL[0]+.5,cTL[1]+.5],[cTR[0]+1,cTR[1]+.5],[cBR[0]+1,cBR[1]+1],[cBL[0]+.5,cBL[1]+1]];
+  // edge pixels
+  var ex=[],ey=[];
+  for(y=1;y<h-1;y++)for(x=1;x<w-1;x++){
+    var k=y*w+x;if(bg[k])continue;
+    if(bg[k-1]||bg[k+1]||bg[k-w]||bg[k+w]){ex.push(x+.5);ey.push(y+.5);}
+  }
+  // line fit per side
+  var lines=[],j;
+  for(i=0;i<4;i++){
+    var A=c[i],B=c[(i+1)%4],dx=B[0]-A[0],dy=B[1]-A[1],len=Math.sqrt(dx*dx+dy*dy)||1,ux=dx/len,uy=dy/len;
+    var tol=Math.max(2.5,len*0.025),mx=0,my=0,cnt=0,sel=[];
+    for(j=0;j<ex.length;j++){
+      var rx=ex[j]-A[0],ry=ey[j]-A[1],t=(rx*ux+ry*uy)/len,dist=Math.abs(rx*uy-ry*ux);
+      if(t>0.12&&t<0.88&&dist<=tol){sel.push(j);mx+=ex[j];my+=ey[j];cnt++;}
+    }
+    if(cnt<6){lines.push(null);continue;}
+    mx/=cnt;my/=cnt;var sxx=0,sxy=0,syy=0;
+    for(j=0;j<sel.length;j++){var a=ex[sel[j]]-mx,b=ey[sel[j]]-my;sxx+=a*a;sxy+=a*b;syy+=b*b;}
+    var ang=0.5*Math.atan2(2*sxy,sxx-syy);
+    lines.push({x:mx,y:my,dx:Math.cos(ang),dy:Math.sin(ang)});
+  }
+  var q=[];
+  for(i=0;i<4;i++){
+    var l1=lines[(i+3)%4],l2=lines[i],cc=c[i],pt=cc;
+    if(l1&&l2){
+      var den=l1.dx*l2.dy-l1.dy*l2.dx;
+      if(Math.abs(den)>0.2){
+        var tt=((l2.x-l1.x)*l2.dy-(l2.y-l1.y)*l2.dx)/den;
+        var ix=l1.x+l1.dx*tt,iy=l1.y+l1.dy*tt;
+        if(Math.abs(ix-cc[0])<8&&Math.abs(iy-cc[1])<8)pt=[ix,iy];
+      }
+    }
+    q.push(pt);
+  }
+  // validation: convex, area fill, aspect
+  var sg=0;
+  for(i=0;i<4;i++){
+    var p0=q[i],p1=q[(i+1)%4],p2=q[(i+2)%4];
+    var cr=(p1[0]-p0[0])*(p2[1]-p1[1])-(p1[1]-p0[1])*(p2[0]-p1[0]);
+    if(cr<=0)return{err:'shape'};
+  }
+  var pa=0;
+  for(i=0;i<4;i++){var a0=q[i],a1=q[(i+1)%4];pa+=a0[0]*a1[1]-a1[0]*a0[1];}
+  pa=Math.abs(pa)/2;
+  if(!pa||area/pa<0.9||area/pa>1.1)return{err:'shape'};
+  function D(a,b){return Math.hypot(a[0]-b[0],a[1]-b[1]);}
+  var top=(D(q[0],q[1])+D(q[3],q[2]))/2,left=(D(q[0],q[3])+D(q[1],q[2]))/2;
+  var asp=Math.max(top,left)/Math.min(top,left);
+  if(asp<1.15||asp>1.8)return{err:'shape'};
+  if(top>left)q=[q[3],q[0],q[1],q[2]];
+  // tiny inset so the paper edge is not included
+  var mx2=0,my2=0;for(i=0;i<4;i++){mx2+=q[i][0]/4;my2+=q[i][1]/4;}
+  var out=q.map(function(p){return[(p[0]+(mx2-p[0])*0.004)/w,(p[1]+(my2-p[1])*0.004)/h];});
+  return{q:out,fill:area/n};
+}
+
 /*PURE-END*/
 </script>
 
@@ -626,7 +750,8 @@ var sleep=function(ms){return new Promise(function(r){setTimeout(r,ms);});};
 var S={
   mode:'class',job:null,
   meta:{date:'',period:1,label:'',setOn:''},skip:{},
-  set:{auto:true,enhance:true,sound:true,confirm:true},
+  set:{auto:true,enhance:true,sound:true,confirm:true,track:true,countdown:true},
+  live:null,disp:null,
   quads:{p:null,l:null},saved:{p:false,l:false},
   pages:[],
   tab:'cam',adjust:false,running:false,busy:false,retakeId:null,
@@ -724,12 +849,14 @@ function layoutFrame(){
   frame.style.width=w+'px';frame.style.height=h+'px';
   drawOverlay();
 }
+function viewQuad(){return(S.set.track&&!S.adjust)?S.disp:curQuad();}
 function drawOverlay(){
-  var q=curQuad();
+  var q=viewQuad();
+  if(!q){ovEdge.setAttribute('points','');ovDim.setAttribute('d','');return;}
   var pts=q.map(function(p){return p[0]+','+p[1];}).join(' ');
   ovEdge.setAttribute('points',pts);
   ovDim.setAttribute('d','M0 0H1V1H0Z M'+q[0][0]+' '+q[0][1]+' L'+q[1][0]+' '+q[1][1]+' L'+q[2][0]+' '+q[2][1]+' L'+q[3][0]+' '+q[3][1]+' Z');
-  handles.forEach(function(h,i){h.style.left=(q[i][0]*100)+'%';h.style.top=(q[i][1]*100)+'%';});
+  if(S.adjust)handles.forEach(function(h,i){h.style.left=(q[i][0]*100)+'%';h.style.top=(q[i][1]*100)+'%';});
 }
 function setStatus(txt,k){
   if(!txt){pill.hidden=true;return;}
@@ -768,7 +895,7 @@ async function startCamera(){
     S.running=true;
     $('#start').hidden=true;
     layoutFrame();
-    if(!S.saved[ori()]){enterAdjust();}else{setStatus(idleText(),'wait');}
+    if(!S.set.track&&!S.saved[ori()]){enterAdjust();}else{setStatus(idleText(),'wait');}
     AN.armed=true;AN.still=0;AN.prev=null;
     startLoop();
   }catch(e){
@@ -781,7 +908,7 @@ function stopStream(){
   if(stream){stream.getTracks().forEach(function(t){t.stop();});stream=null;}
   video.srcObject=null;S.running=false;stopLoop();
 }
-function idleText(){return S.set.auto?'วางกระดาษใต้กล้อง':'ปิดอัตโนมัติ กดปุ่มถ่ายเอง';}
+function idleText(){return S.set.auto?'วางกระดาษใต้กล้อง':(S.set.track?'กดปุ่มถ่ายเอง':'ปิดอัตโนมัติ กดปุ่มถ่ายเอง');}
 
 /* ---------- adjust frame ---------- */
 function enterAdjust(){
@@ -790,7 +917,7 @@ function enterAdjust(){
 }
 function leaveAdjust(){
   S.adjust=false;frame.classList.remove('adjusting');$('#stripCam').hidden=false;$('#stripAdj').hidden=true;
-  S.saved[ori()]=true;lsSet('sagan.quads.v1',S.quads);
+  S.saved[ori()]=true;lsSet('sagan.quads.v1',S.quads);S.live=null;S.disp=null;
   AN.armed=true;AN.still=0;AN.prev=null;
   setStatus(idleText(),'wait');
 }
@@ -822,31 +949,52 @@ var anCtx=AN.cv.getContext('2d',{willReadFrequently:true});
 function startLoop(){stopLoop();AN.timer=setInterval(analyze,150);}
 function stopLoop(){if(AN.timer){clearInterval(AN.timer);AN.timer=null;}setProgress(0);}
 function overlaysOpen(){return document.querySelector('.sw.open')||$('#viewer').classList.contains('open');}
+function qDist(a,b){var m=0;for(var i=0;i<4;i++)m=Math.max(m,Math.abs(a[i][0]-b[i][0])+Math.abs(a[i][1]-b[i][1]));return m;}
+function resetAN(){AN.armed=true;AN.still=0;AN.prev=null;}
 function analyze(){
   if(!S.running||S.tab!=='cam'||S.adjust||S.busy||document.hidden||overlaysOpen())return;
   var vw=video.videoWidth,vh=video.videoHeight;if(!vw||!vh)return;
-  if(!S.set.auto){setProgress(0);return;}
-  var w=128,h=Math.max(2,Math.round(128*vh/vw));
-  if(AN.cv.height!==h){AN.cv.height=h;AN.prev=null;}
+  var trk=!!S.set.track;
+  if(!trk&&!S.set.auto){setProgress(0);return;}
+  var w=trk?320:128,h=Math.max(2,Math.round(w*vh/vw));
+  if(AN.cv.width!==w||AN.cv.height!==h){AN.cv.width=w;AN.cv.height=h;AN.prev=null;AN.lastDet=null;}
   anCtx.drawImage(video,0,0,w,h);
   var px=anCtx.getImageData(0,0,w,h).data;
-  var q=curQuad(),xs=q.map(function(p){return p[0]*w;}),ys=q.map(function(p){return p[1]*h;});
-  var minX=Math.min.apply(null,xs),maxX=Math.max.apply(null,xs),minY=Math.min.apply(null,ys),maxY=Math.max.apply(null,ys);
-  var ix=(maxX-minX)*0.06,iy=(maxY-minY)*0.06;
-  var x0=Math.max(0,Math.floor(minX+ix)),x1=Math.min(w-1,Math.ceil(maxX-ix)),y0=Math.max(0,Math.floor(minY+iy)),y1=Math.min(h-1,Math.ceil(maxY-iy));
-  var cur=[],bright=0;
-  for(var y=y0;y<=y1;y+=2)for(var x=x0;x<=x1;x+=2){
-    var i=(y*w+x)*4,l=(px[i]*77+px[i+1]*150+px[i+2]*29)>>8;
-    cur.push(l);if(l>110)bright++;
+  var present,jitter=0,cur=[],bright=0,i,x,y;
+  if(trk){
+    var L=new Uint8Array(w*h);
+    for(i=0;i<w*h;i++){var o=i*4;L[i]=(px[o]*77+px[o+1]*150+px[o+2]*29)>>8;}
+    for(y=0;y<h;y+=3)for(x=0;x<w;x+=3)cur.push(L[y*w+x]);
+    var res=detectPaper(L,w,h);
+    if(res.q){
+      if(S.live&&qDist(res.q,S.live)<0.06){S.live=S.live.map(function(p,k){return[p[0]+(res.q[k][0]-p[0])*0.6,p[1]+(res.q[k][1]-p[1])*0.6];});}
+      else S.live=res.q;
+      jitter=AN.lastDet?qDist(res.q,AN.lastDet):1;AN.lastDet=res.q;S.miss=0;S.why='';
+    }else{
+      S.miss=(S.miss||0)+1;S.why=res.err;AN.lastDet=null;
+      if(S.miss>=3)S.live=null;
+    }
+    present=!!res.q;
+  }else{
+    var q=curQuad(),xs=q.map(function(p){return p[0]*w;}),ys=q.map(function(p){return p[1]*h;});
+    var minX=Math.min.apply(null,xs),maxX=Math.max.apply(null,xs),minY=Math.min.apply(null,ys),maxY=Math.max.apply(null,ys);
+    var ix=(maxX-minX)*0.06,iy=(maxY-minY)*0.06;
+    var x0=Math.max(0,Math.floor(minX+ix)),x1=Math.min(w-1,Math.ceil(maxX-ix)),y0=Math.max(0,Math.floor(minY+iy)),y1=Math.min(h-1,Math.ceil(maxY-iy));
+    for(y=y0;y<=y1;y+=2)for(x=x0;x<=x1;x+=2){
+      var k2=(y*w+x)*4,l=(px[k2]*77+px[k2+1]*150+px[k2+2]*29)>>8;
+      cur.push(l);if(l>110)bright++;
+    }
+    if(!cur.length)return;
+    present=bright/cur.length>0.55;
   }
   if(!cur.length)return;
-  var present=bright/cur.length>0.55;
   var diff=0,prev=AN.prev;
   if(prev&&prev.length===cur.length){var s=0;for(var k=0;k<cur.length;k++)s+=Math.abs(cur[k]-prev[k]);diff=s/cur.length;}else{diff=99;}
   AN.prev=cur;AN.cur=cur;
-  if(!present){AN.armed=true;AN.still=0;setProgress(0);setStatus('วางกระดาษใต้กล้อง','wait');return;}
-  if(diff>5){AN.armed=true;AN.still=0;setProgress(0);setStatus('กำลังจัดกระดาษ…','wait');return;}
-  if(diff<2.4){
+  if(!S.set.auto){setProgress(0);setStatus(present?'พบกระดาษ กดปุ่มถ่ายเอง':(trk&&S.why==='partial'?'เห็นกระดาษไม่ครบทั้งแผ่น':'วางกระดาษใต้กล้อง'),present?'ready':'wait');return;}
+  if(!present){AN.armed=true;AN.still=0;setProgress(0);setStatus(trk&&S.why==='partial'?'เห็นกระดาษไม่ครบ ขยับให้อยู่ในภาพ':'วางกระดาษใต้กล้อง','wait');return;}
+  if(diff>5||jitter>0.02){AN.armed=true;AN.still=0;setProgress(0);setStatus('กำลังจัดกระดาษ…','wait');return;}
+  if(diff<2.4&&jitter<0.006){
     if(!AN.armed){setProgress(0);setStatus('รอหน้าถัดไป','ok');return;}
     AN.still++;setProgress(AN.still/AN.N);setStatus('นิ่งไว้สักครู่','ready');
     if(AN.still>=AN.N){
@@ -859,6 +1007,24 @@ function analyze(){
     }
   }else{AN.still=0;setProgress(0);}
 }
+/* the frame runs toward the paper corners */
+function trackAnim(){
+  if(S.set.track&&!S.adjust&&S.running&&S.tab==='cam'){
+    var t=S.live;
+    if(t){
+      if(!S.disp)S.disp=defaultQuad().map(function(p){return p.slice();});
+      var moved=0;
+      for(var i=0;i<4;i++){
+        var dx=t[i][0]-S.disp[i][0],dy=t[i][1]-S.disp[i][1];
+        S.disp[i][0]+=dx*0.28;S.disp[i][1]+=dy*0.28;moved+=Math.abs(dx)+Math.abs(dy);
+      }
+      if(moved>0.0004||S._dr)drawOverlay();
+      S._dr=moved>0.0004;
+    }else if(S.disp){S.disp=null;drawOverlay();}
+  }
+  requestAnimationFrame(trackAnim);
+}
+requestAnimationFrame(trackAnim);
 
 /* ---------- capture ---------- */
 var workCv=document.createElement('canvas'),outCv=document.createElement('canvas'),thCv=document.createElement('canvas');
@@ -875,7 +1041,7 @@ async function capture(manual){
     var wc=workCv.getContext('2d',{willReadFrequently:true});
     wc.drawImage(video,0,0,vw,vh);
     var img=wc.getImageData(0,0,vw,vh);
-    var q=curQuad().map(function(p){return[p[0]*vw,p[1]*vh];});
+    var q=((S.set.track&&S.live)?S.live:curQuad()).map(function(p){return[p[0]*vw,p[1]*vh];});
     await sleep(0);
     var out=warpPerspective(img.data,vw,vh,q,A4W,A4H);
     workCv.width=1;workCv.height=1;
@@ -924,7 +1090,10 @@ function askConfirm(blob){
   return new Promise(function(res){
     var url=URL.createObjectURL(blob);
     $('#cfImg').src=url;$('#cfT').textContent=confirmTitle();
+    var cd=null,n=3,cdEl=$('#cfCd'),okB=$('#cfOk');
     var done=function(v){
+      if(cd){clearInterval(cd);cd=null;}
+      cdEl.hidden=true;okB.textContent='ใช้หน้านี้';
       $('#cfOk').onclick=null;$('#cfNo').onclick=null;
       $('#swCf').classList.remove('open');
       setTimeout(function(){URL.revokeObjectURL(url);},400);
@@ -932,6 +1101,15 @@ function askConfirm(blob){
     };
     $('#cfOk').onclick=function(){done(true);};
     $('#cfNo').onclick=function(){done(false);};
+    cdEl.hidden=true;okB.textContent='ใช้หน้านี้';
+    if(S.set.countdown){
+      var show=function(){cdEl.hidden=false;cdEl.textContent=n;cdEl.classList.remove('tick');void cdEl.offsetWidth;cdEl.classList.add('tick');okB.textContent='ใช้หน้านี้ ('+n+')';};
+      setTimeout(function(){
+        if(!$('#swCf').classList.contains('open'))return;
+        show();
+        cd=setInterval(function(){n--;if(n<=0){done(true);}else show();},1000);
+      },450);
+    }
     openSheet('#swCf');
   });
 }
@@ -1025,7 +1203,7 @@ Array.prototype.forEach.call(document.querySelectorAll('[data-close]'),function(
 });});
 function syncSettings(){
   $('#fDate').value=S.meta.date;$('#pVal').textContent=S.meta.period;$('#fLabel').value=S.meta.label;
-  $('#tAuto').setAttribute('aria-checked',S.set.auto);$('#tEnh').setAttribute('aria-checked',S.set.enhance);$('#tCf').setAttribute('aria-checked',S.set.confirm);$('#tSnd').setAttribute('aria-checked',S.set.sound);
+  $('#tAuto').setAttribute('aria-checked',S.set.auto);$('#tTrack').setAttribute('aria-checked',S.set.track);$('#tCd').setAttribute('aria-checked',S.set.countdown);$('#tEnh').setAttribute('aria-checked',S.set.enhance);$('#tCf').setAttribute('aria-checked',S.set.confirm);$('#tSnd').setAttribute('aria-checked',S.set.sound);
 }
 $('#gear').addEventListener('click',function(){syncSettings();openSheet('#swSet');});
 function setSession(s){
@@ -1124,9 +1302,28 @@ $('#fDate').addEventListener('change',function(e){if(e.target.value){S.meta.date
 $('#fLabel').addEventListener('input',function(e){S.meta.label=e.target.value.trim();saveMeta();updateHeader();});
 $('#pMinus').addEventListener('click',function(){S.meta.period=Math.max(1,S.meta.period-1);$('#pVal').textContent=S.meta.period;saveMeta();updateHeader();updateLastThumb();});
 $('#pPlus').addEventListener('click',function(){S.meta.period=Math.min(12,S.meta.period+1);$('#pVal').textContent=S.meta.period;saveMeta();updateHeader();updateLastThumb();});
+function updateAutoBtn(){
+  var on=!!S.set.track;
+  var b=$('#autoBtn');b.setAttribute('aria-pressed',String(on));$('#autoTxt').textContent=on?'อัตโนมัติ เปิด':'อัตโนมัติ ปิด';
+}
+function trackChanged(){
+  S.live=null;S.disp=null;S.miss=0;AN.prev=null;AN.lastDet=null;AN.armed=true;AN.still=0;
+  if(S.running&&!S.adjust){
+    if(!S.set.track&&!S.saved[ori()])enterAdjust();else setStatus(idleText(),'wait');
+    drawOverlay();
+  }
+}
+$('#autoBtn').addEventListener('click',function(){
+  var on=!S.set.track;
+  S.set.track=on;S.set.auto=on;S.set.countdown=on;lsSet('sagan.set.v1',S.set);
+  syncSettings();trackChanged();updateAutoBtn();
+  if(S.running&&!S.adjust){setStatus(on?'เปิดอัตโนมัติ':'ปิดอัตโนมัติ กดถ่ายเอง','ok');setTimeout(function(){if(!S.busy&&!S.adjust&&S.running)setStatus(idleText(),'wait');},1600);}
+});
 function bindSwitch(id,key){$(id).addEventListener('click',function(){S.set[key]=!S.set[key];lsSet('sagan.set.v1',S.set);syncSettings();
-  if(key==='auto'&&S.running&&!S.adjust){AN.armed=true;AN.still=0;setStatus(idleText(),'wait');}});}
-bindSwitch('#tAuto','auto');bindSwitch('#tCf','confirm');bindSwitch('#tEnh','enhance');bindSwitch('#tSnd','sound');
+  if(key==='track')trackChanged();
+  if(key==='auto'&&S.running&&!S.adjust){AN.armed=true;AN.still=0;setStatus(idleText(),'wait');}
+  updateAutoBtn();});}
+bindSwitch('#tAuto','auto');bindSwitch('#tTrack','track');bindSwitch('#tCd','countdown');bindSwitch('#tCf','confirm');bindSwitch('#tEnh','enhance');bindSwitch('#tSnd','sound');
 $('#setFrame').addEventListener('click',function(){closeSheets();setTab('cam');if(S.running)enterAdjust();else showStart('ปรับกรอบกระดาษ','เปิดกล้องก่อน แล้วลากมุมทั้งสี่ให้ตรงขอบกระดาษ',false,'เปิดกล้อง');});
 var wipeArm=false;
 $('#wipe').addEventListener('click',async function(){
@@ -1240,7 +1437,7 @@ $('#adjReset').addEventListener('click',function(){S.quads[ori()]=defaultQuad();
 document.addEventListener('visibilitychange',function(){
   if(document.hidden&&S.running){stopStream();showStart('พักกล้องไว้','แตะเพื่อเปิดกล้องต่อ',false,'เปิดกล้องต่อ');}
 });
-video.addEventListener('resize',function(){layoutFrame();if(S.running&&!S.adjust&&!S.saved[ori()])enterAdjust();});
+video.addEventListener('resize',function(){layoutFrame();if(S.running&&!S.adjust&&!S.set.track&&!S.saved[ori()])enterAdjust();});
 if(window.ResizeObserver){new ResizeObserver(layoutFrame).observe(stage);}else{window.addEventListener('resize',layoutFrame);}
 ['gesturestart','gesturechange','gestureend'].forEach(function(ev){document.addEventListener(ev,function(e){e.preventDefault();});});
 document.addEventListener('dblclick',function(e){e.preventDefault();});
@@ -1263,7 +1460,7 @@ document.addEventListener('touchmove',function(e){if(e.touches&&e.touches.length
   try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist();}catch(e){}
   var rows=await DB.all();
   S.pages=rows.map(function(r){r._tu=URL.createObjectURL(r.thumb);return r;});
-  updateModeUI();renderLib();
+  updateModeUI();updateAutoBtn();renderLib();
   showStart('พร้อมสแกน','วางกระดาษใต้กล้อง ระบบจะถ่ายให้เองเมื่อกระดาษนิ่ง',false,'เปิดกล้อง');
 })();
 })();
