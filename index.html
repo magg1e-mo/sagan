@@ -735,6 +735,42 @@ function detectPaper(L,w,h){
   return{q:out,fill:area/n};
 }
 
+/* small residual tilt: find the angle at which printed text lines are most "row-aligned", then rotate it out */
+function deskewAngle(rgba,W,H){
+  var f=4,w=Math.floor(W/f),h=Math.floor(H/f),i,x,y,pts=[];
+  for(y=0;y<h;y++)for(x=0;x<w;x++){
+    var o=((y*f+2)*W+(x*f+2))*4,g=(rgba[o]*77+rgba[o+1]*150+rgba[o+2]*29)>>8;
+    if(g<150&&x>w*0.04&&x<w*0.96&&y>h*0.04&&y<h*0.96)pts.push(x-w/2,y-h/2);
+  }
+  if(pts.length<800)return 0;
+  var nb=Math.ceil(Math.hypot(w,h))+4,bins=new Float64Array(nb);
+  function score(a){
+    var c=Math.cos(a),s=Math.sin(a),k,m,b,sc=0;
+    bins.fill(0);
+    for(k=0;k<pts.length;k+=2){b=Math.round(pts[k+1]*c-pts[k]*s+nb/2);bins[b]++;}
+    for(m=0;m<nb;m++)sc+=bins[m]*bins[m];
+    return sc;
+  }
+  var best=0,bs=-1,a,s0=score(0);
+  for(a=-2;a<=2.0001;a+=0.25){var sc=score(a*Math.PI/180);if(sc>bs){bs=sc;best=a;}}
+  for(a=best-0.2;a<=best+0.2001;a+=0.05){var sc2=score(a*Math.PI/180);if(sc2>bs){bs=sc2;best=a;}}
+  if(Math.abs(best)<0.2||bs<s0*1.04)return 0;
+  return best;
+}
+function rotateRGBA(src,W,H,deg){
+  var out=new Uint8ClampedArray(src.length),r=deg*Math.PI/180,c=Math.cos(r),s=Math.sin(r),cx=W/2,cy=H/2,x,y;
+  for(y=0;y<H;y++)for(x=0;x<W;x++){
+    var dx=x-cx,dy=y-cy,sx=cx+dx*c-dy*s,sy=cy+dx*s+dy*c,o=(y*W+x)*4;
+    if(sx<0||sy<0||sx>=W-1||sy>=H-1){out[o]=out[o+1]=out[o+2]=255;out[o+3]=255;continue;}
+    var x0=sx|0,y0=sy|0,fx=sx-x0,fy=sy-y0,p=(y0*W+x0)*4,q=p+W*4;
+    for(var ch=0;ch<3;ch++){
+      out[o+ch]=(src[p+ch]*(1-fx)+src[p+4+ch]*fx)*(1-fy)+(src[q+ch]*(1-fx)+src[q+4+ch]*fx)*fy;
+    }
+    out[o+3]=255;
+  }
+  return out;
+}
+
 /*PURE-END*/
 </script>
 
@@ -1046,6 +1082,9 @@ async function capture(manual){
     var out=warpPerspective(img.data,vw,vh,q,A4W,A4H);
     workCv.width=1;workCv.height=1;
     if(S.set.enhance){await sleep(0);enhanceScan(out,A4W,A4H);}
+    await sleep(0);
+    var dk=deskewAngle(out,A4W,A4H);
+    if(dk){await sleep(0);out=rotateRGBA(out,A4W,A4H,dk);}
     outCv.width=A4W;outCv.height=A4H;
     outCv.getContext('2d').putImageData(new ImageData(out,A4W,A4H),0,0);
     var blob=await toBlob(outCv,'image/jpeg',0.86);
