@@ -358,6 +358,22 @@ main{flex:1;min-height:0;position:relative}
   </div>
 </div>
 
+<!-- save-as sheet -->
+<div class="sw" id="swSv">
+  <div class="bd" data-close></div>
+  <div class="sheet" role="dialog" aria-label="บันทึกเป็น">
+    <div class="grab"></div>
+    <h2>บันทึกเป็น</h2>
+    <p class="muted" id="svInfo" style="margin:0 0 12px"></p>
+    <div class="actions">
+      <button class="btn primary" data-svk="pdf">PDF (รวมทุกหน้าเป็นไฟล์เดียว)</button>
+      <button class="btn" data-svk="img">รูปภาพ (JPG ทีละหน้า)</button>
+      <button class="btn" data-svk="docx">Word (.docx)</button>
+      <button class="btn" data-close>ยกเลิก</button>
+    </div>
+  </div>
+</div>
+
 <!-- export sheet -->
 <div class="sw" id="swEx">
   <div class="bd" data-close></div>
@@ -642,9 +658,9 @@ function polishScan(d,W,H){
     let t=(m-BP)*K;t=lut[t<0?0:t>255?255:(t+0.5)|0];
     const f=m>0?t/m:0;
     const r=d[p]*f,g=d[p+1]*f,b=d[p+2]*f,y=0.299*r+0.587*g+0.114*b;
-    let v=y+(r-y)*SAT+dl;d[p]=v<0?0:v>255?255:v;
-    v=y+(g-y)*SAT+dl;d[p+1]=v<0?0:v>255?255:v;
-    v=y+(b-y)*SAT+dl;d[p+2]=v<0?0:v>255?255:v;
+    let sa=SAT+0.4*(y<215?(y>90?1:y/90)*((215-y)/125>1?1:(215-y)/125):0),v=y+(r-y)*sa+dl;d[p]=v<0?0:v>255?255:v;
+    v=y+(g-y)*sa+dl;d[p+1]=v<0?0:v>255?255:v;
+    v=y+(b-y)*sa+dl;d[p+2]=v<0?0:v>255?255:v;
   }
 }
 const CRC_T=(()=>{const t=new Uint32Array(256);for(let n=0;n<256;n++){let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;t[n]=c>>>0;}return t;})();
@@ -672,6 +688,27 @@ function zipStore(files,mime){
   ev.setUint32(0,0x06054b50,true);ev.setUint16(8,files.length,true);ev.setUint16(10,files.length,true);
   ev.setUint32(12,csize,true);ev.setUint32(16,offset,true);
   return new Blob([...parts,...central,eo],{type:mime});
+}
+function buildPdfBlob(jpegs,w,h){
+  var enc=new TextEncoder(),parts=[],off=0,xr=[];
+  function push(u){parts.push(u);off+=u.length;}
+  function str(t){push(enc.encode(t));}
+  var PW=595.28,PH=841.89,n=jpegs.length,kids=[];
+  str('%PDF-1.4\n');
+  xr[1]=off;str('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+  for(var i=0;i<n;i++)kids.push((3+i*3)+' 0 R');
+  xr[2]=off;str('2 0 obj\n<< /Type /Pages /Count '+n+' /Kids ['+kids.join(' ')+'] >>\nendobj\n');
+  for(var j=0;j<n;j++){
+    var pg=3+j*3,ct=pg+1,im=pg+2,cs='q '+PW+' 0 0 '+PH+' 0 0 cm /Im0 Do Q';
+    xr[pg]=off;str(pg+' 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+PW+' '+PH+'] /Resources << /XObject << /Im0 '+im+' 0 R >> >> /Contents '+ct+' 0 R >>\nendobj\n');
+    xr[ct]=off;str(ct+' 0 obj\n<< /Length '+cs.length+' >>\nstream\n'+cs+'\nendstream\nendobj\n');
+    xr[im]=off;str(im+' 0 obj\n<< /Type /XObject /Subtype /Image /Width '+w+' /Height '+h+' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+jpegs[j].length+' >>\nstream\n');
+    push(jpegs[j]);str('\nendstream\nendobj\n');
+  }
+  var total=3+n*3,xo=off,x='xref\n0 '+total+'\n0000000000 65535 f \n';
+  for(var k=1;k<total;k++){x+=('0000000000'+xr[k]).slice(-10)+' 00000 n \n';}
+  str(x+'trailer\n<< /Size '+total+' /Root 1 0 R >>\nstartxref\n'+xo+'\n%%EOF');
+  return new Blob(parts,{type:'application/pdf'});
 }
 function buildDocxBlob(jpegs){
   const enc=new TextEncoder();
@@ -1448,7 +1485,7 @@ function groupHtml(g){
     var lab='';for(var i=0;i<g.pages.length;i++){if(g.pages[i].label){lab=g.pages[i].label;break;}}
     h+='<b>'+esc(fmtDate(g.date))+'</b><span class="num">คาบ '+g.period+(lab?' · '+esc(lab):'')+' · '+g.pages.length+' หน้า</span>';
   }
-  h+='</div><div class="gact"><button class="btn sm" data-ex="'+esc(g.key)+'">Word</button>'
+  h+='</div><div class="gact"><button class="btn sm" '+(g.kind==='job'?'data-sv="':'data-ex="')+esc(g.key)+'">'+(g.kind==='job'?'บันทึก':'Word')+'</button>'
     +'<button class="btn sm danger" data-del="'+esc(g.key)+'" aria-label="ลบทั้งกลุ่ม"><svg class="i" viewBox="0 0 24 24" style="width:18px;height:18px"><path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12M10 11v5M14 11v5"/></svg></button></div></div><div class="grid">';
   g.pages.forEach(function(p,i){h+='<button class="th" data-open="'+p.id+'" aria-label="หน้า '+(i+1)+'"><img alt="" src="'+p._tu+'"><em>'+(i+1)+'</em></button>';});
   return h+'</div></div>';
@@ -1473,6 +1510,7 @@ function renderLib(){
 $('#lib').addEventListener('click',function(e){
   var t=e.target.closest('button');if(!t)return;
   if(t.hasAttribute('data-imp')){$('#impFile').click();}
+  else if(t.dataset.sv){var sl=sortedGroup(t.dataset.sv);if(sl.length){S.svList=sl;$('#svInfo').textContent=sl[0].jobName+' · '+sl.length+' หน้า';openSheet('#swSv');}}
   else if(t.dataset.open){openViewer(t.dataset.open);}
   else if(t.dataset.ex){var k=t.dataset.ex,l=sortedGroup(k);if(l.length){var f=l[0],lb='';for(var q=0;q<l.length;q++){if(l[q].label){lb=l[q].label;break;}}
       var safe=function(x){return String(x).replace(/[\\\/:*?"<>|\s]+/g,'-');};
@@ -1698,10 +1736,11 @@ $('#vDel').addEventListener('click',async function(){
 $('#lastBtn').addEventListener('click',function(){var id=$('#lastBtn').dataset.id;if(id)openViewer(id);});
 
 /* ---------- export ---------- */
-async function runExport(list,name){
+async function runExport(list,name,kind){
   if(!list.length)return;
-  S.exportFile=null;
-  $('#exT').textContent='กำลังสร้างไฟล์ Word';
+  kind=kind||'docx';
+  S.exportFiles=null;
+  $('#exT').textContent=kind==='pdf'?'กำลังสร้าง PDF':kind==='img'?'กำลังเตรียมรูป':'กำลังสร้างไฟล์ Word';
   $('#exBuild').hidden=false;$('#exDone').hidden=true;$('#exErr').hidden=true;
   $('#exBar').style.width='0%';$('#exCnt').textContent='0 / '+list.length+' หน้า';
   openSheet('#swEx');
@@ -1713,25 +1752,37 @@ async function runExport(list,name){
       $('#exCnt').textContent=(i+1)+' / '+list.length+' หน้า';
       await sleep(0);
     }
-    var blob=buildDocxBlob(jpegs);
-    S.exportFile=new File([blob],name,{type:MIME_DOCX});
+    var blob,tot=0;
+    if(kind==='pdf'){blob=buildPdfBlob(jpegs,A4W,A4H);S.exportFiles=[new File([blob],name.replace(/\.docx$/,'.pdf'),{type:'application/pdf'})];tot=blob.size;}
+    else if(kind==='img'){
+      var base=name.replace(/\.docx$/,'');
+      S.exportFiles=list.map(function(p,ix){tot+=p.blob.size;return new File([p.blob],base+(list.length>1?'_'+(ix+1):'')+'.jpg',{type:'image/jpeg'});});
+    }else{blob=buildDocxBlob(jpegs);S.exportFiles=[new File([blob],name,{type:MIME_DOCX})];tot=blob.size;}
     $('#exBar').style.width='100%';
     $('#exT').textContent='ไฟล์พร้อมแล้ว';
-    $('#exName').textContent=name;
-    $('#exMeta').textContent=list.length+' หน้า · '+(blob.size/1048576).toFixed(1)+' MB';
+    $('#exName').textContent=S.exportFiles.length>1?S.exportFiles.length+' รูป (JPG)':S.exportFiles[0].name;
+    $('#exMeta').textContent=list.length+' หน้า · '+(tot/1048576).toFixed(1)+' MB';
     $('#exBuild').hidden=true;$('#exDone').hidden=false;
   }catch(e){
     $('#exT').textContent='ส่งออกไม่สำเร็จ';$('#exBuild').hidden=true;$('#exErr').hidden=false;
   }
 }
+$('#swSv').addEventListener('click',function(e){
+  var b=e.target.closest('[data-svk]');if(!b||!S.svList)return;
+  var l=S.svList,f=l[0],safe=function(x){return String(x).replace(/[\\\/:*?"<>|\s]+/g,'-');};
+  closeSheets();
+  setTimeout(function(){runExport(l,'สแกน_'+safe(f.jobName)+'_'+f.date+'.docx',b.dataset.svk);},260);
+});
 $('#exSave').addEventListener('click',async function(){
-  var f=S.exportFile;if(!f)return;
+  var fs=S.exportFiles;if(!fs||!fs.length)return;
   try{
-    if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],title:f.name});return;}
+    if(navigator.canShare&&navigator.canShare({files:fs})){await navigator.share({files:fs,title:fs[0].name});return;}
   }catch(e){if(e&&e.name==='AbortError')return;}
-  var url=URL.createObjectURL(f),a=document.createElement('a');
-  a.href=url;a.download=f.name;document.body.appendChild(a);a.click();a.remove();
-  setTimeout(function(){URL.revokeObjectURL(url);},60000);
+  fs.forEach(function(f,i){setTimeout(function(){
+    var url=URL.createObjectURL(f),a=document.createElement('a');
+    a.href=url;a.download=f.name;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(function(){URL.revokeObjectURL(url);},60000);
+  },i*400);});
 });
 
 /* ---------- buttons on camera ---------- */
